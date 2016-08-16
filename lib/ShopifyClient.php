@@ -25,7 +25,7 @@ class ShopifyClient
      */
     public function __construct($shop_domain, $token, $api_key, $secret) {
         $this->name = "ShopifyClient";
-        $this->shop_domain = preg_replace('/^https?:\/\//i', '', $shop_domain);
+        $this->shop_domain = preg_replace('/^http(s)?:\/\//i', '', $shop_domain);
         $this->token = $token;
         $this->api_key = $api_key;
         $this->secret = $secret;
@@ -44,7 +44,7 @@ class ShopifyClient
         $scope = is_array($scope) ? implode(',', $scope) : $scope;
         $data = array(
             'client_id' => $this->api_key,
-            'scope'     => $scope
+            'scope'     => $scope,
         );
 
         if ($redirect_url)
@@ -60,23 +60,33 @@ class ShopifyClient
      * @return token || false
      */
     public function getAccessToken($code) {
-        // POST to  POST https://SHOP_NAME.myshopify.com/admin/oauth/access_token
+        // POST to https://SHOP_NAME.myshopify.com/admin/oauth/access_token
         $url = "https://{$this->shop_domain}/admin/oauth/access_token";
-        $payload = http_build_query(array(
+
+        //Datas absolutely need to be encoded with JSON
+        $payload = json_encode(array(
             'client_id'     => $this->api_key,
             'client_secret' => $this->secret,
             'code'          => $code
         ));
-        $response = $this->curlHttpApiRequest('POST', $url, '', $payload, array());
+
+        //Do not forget these headers !
+        $headers = array(
+            "Content-Type: application/json",
+            "Accept: application/json",
+            "Content-Length:" . strlen($payload)
+        );
+
+        $response = $this->curlHttpApiRequest('POST', $url, '', $payload, $headers);
         $response = json_decode($response, true);
 
-        // If there is token, we affect it to the client
+        // If there is token, we affect it to the client ...
         if (isset($response['access_token'])) {
             $this->token = $response['access_token'];
             return $this->token;
         }
 
-        // Else we return false
+        // ... else we return false
         return false;
     }
 
@@ -238,12 +248,7 @@ class ShopifyClient
 
         list($message_headers, $message_body) = preg_split("/\r\n\r\n|\n\n|\r\r/", $response, 2);
         $this->last_response_headers = $this->curlParseHeaders($message_headers);
-        $status_code = (int)$this->last_response_headers['http_status_code'];
-
-        if ($status_code >= 200 && $status_code < 300) {
-            $this->calls_left = (int)$this->callsLeft();
-        }
-
+        $this->calls_left = (int)$this->callsLeft();
         return $message_body;
     }
 
@@ -294,6 +299,9 @@ class ShopifyClient
     protected function shopApiCallLimitParam($index) {
         if ($this->last_response_headers == null) {
             throw new Exception('Cannot be called before an API call.');
+        }
+        if (!array_key_exists('http_x_shopify_shop_api_call_limit', $this->last_response_headers)) {
+            return 1; //return 1 to make sure you can continue to send requests
         }
         $params = explode('/', $this->last_response_headers['http_x_shopify_shop_api_call_limit']);
         return (int)$params[$index];
